@@ -8,7 +8,7 @@ app.use(cors());
 const server = require("http").Server(app);
 const io = require("socket.io")(server, {
   cors: {
-    origin: ["https://simple-multiplayer-board-game-client.vercel.app"],
+    origin: ["http://localhost:3000"],
     methods: ["GET", "POST"],
   },
 });
@@ -180,7 +180,8 @@ io.on("connection", (socket) => {
         gameId: game.id,
       });
       console.log(
-        `Player ${playerName} joined game ${gameId}, waiting for ${game.numPlayers - game.players.length
+        `Player ${playerName} joined game ${gameId}, waiting for ${
+          game.numPlayers - game.players.length
         } more players`
       );
     }
@@ -208,12 +209,7 @@ io.on("connection", (socket) => {
           game.players[playerIndex].nextTurn = false;
 
           // Notify all connected clients about the score change and the next player's turn
-          let nextPlayerIndex;
-          if (playerIndex >= game.players.length - 1) {
-            nextPlayerIndex = 0;
-          } else nextPlayerIndex = parseInt(playerIndex) + 1;
-
-
+          const nextPlayerIndex = (playerIndex + 1) % game.players.length;
           game.players[nextPlayerIndex].nextTurn = true;
           // Update the game state and emit a 'completed' event to the client
           game.board[selectedSquare].alreadyPlayed = true;
@@ -560,11 +556,18 @@ app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
   } else if (playerIndex < 0 || playerIndex >= game.players.length) {
     // If the player index is out of bounds, return a 400 error
     res.status(400).json({ error: "Invalid player index" });
+  } else if (game.players[playerIndex].turns >= game.numTurns) {
+    // If the player has already taken the maximum number of turns, return a 400 error
+    res
+      .status(400)
+      .json({ error: "Maximum number of turns taken by the player" });
   } else {
     // Update the player's score and increment their turns taken
+    let playerTurns = game.players[playerIndex].turns;
     game.players[playerIndex].score += score;
     // Update the player's score
     game.players[playerIndex].turns++;
+    // Set the current player's nextTurn to false
     game.players[playerIndex].nextTurn = false;
 
     // Notify all connected clients about the score change and the next player's turn
@@ -573,32 +576,73 @@ app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
       nextPlayerIndex = 0;
     } else nextPlayerIndex = parseInt(playerIndex) + 1;
 
-
     game.players[nextPlayerIndex].nextTurn = true;
-    // Update the game state and emit a 'completed' event to the client
     game.board[selectedSquare].alreadyPlayed = true;
-    console.log("nextPlayerIndex Index is  ", nextPlayerIndex);
 
+    let allTurnsTaken = true;
+    for (let i = 0; i < game.players.length; i++) {
+      if (game.players[i].turns < game.numTurns) {
+        allTurnsTaken = false;
+        break;
+      }
+    }
 
-    setTimeout(() => {
-      io.in(gameId).emit("scoreChange", {
+    let responseData;
+
+    if (allTurnsTaken) {
+      let playersRanking = game.players.filter(
+        (player) => !player.isEliminated
+      );
+      playersRanking.sort((a, b) => b.score - a.score);
+      let winner = playersRanking[0].name;
+      responseData = {
+        winner: winner,
+        playersRanking: playersRanking,
+      };
+      setTimeout(() => {
+        io.in(gameId).emit("gamecompleted", {
+          winner: winner,
+          playersRanking: playersRanking,
+        });
+        console.log("Emitted 'gamecompleted' event");
+      }, 1000);
+    } else {
+      setTimeout(() => {
+        const currentPlayerTurns = game.players[playerIndex].turns;
+        console.log(
+          "Before Emitted 'scoreChange' event",
+          playerTurns,
+          "  - ",
+          currentPlayerTurns
+        );
+        if (currentPlayerTurns !== playerTurns) {
+          playerTurns = currentPlayerTurns; // update playerTurns before emitting event
+          io.in(gameId).emit("scoreChange", {
+            players: game.players,
+            numPlayers: game.numPlayers,
+            playersJoined: game.players.length,
+            numTurns: game.numTurns,
+            board: game.board,
+          });
+          console.log(
+            "Emitted 'scoreChange' event",
+            playerTurns,
+            "  - ",
+            currentPlayerTurns
+          );
+        }
+      }, 1000);
+
+      responseData = {
         players: game.players,
         numPlayers: game.numPlayers,
         playersJoined: game.players.length,
         numTurns: game.numTurns,
         board: game.board,
-        nextPlayer: nextPlayerIndex,
-      });
-      console.log("Emitted 'scoreChange' event");
-    }, 1000);
+      };
+    }
 
-    res.json({
-      players: game.players,
-      numPlayers: game.numPlayers,
-      playersJoined: game.players.length,
-      numTurns: game.numTurns,
-      board: game.board,
-    });
+    res.json(responseData);
 
     // Check if the game is over (i.e., all players have reached their maximum number of turns)
     let gameOver = false;
