@@ -512,6 +512,9 @@ app.post("/join-game/:gameId", (req, res) => {
     });
   }
 });
+app.get("/",(req,res)=>{
+  res.send('server is running....');
+})
 
 // Handler for getting game state
 app.get("/game/:gameId", (req, res) => {
