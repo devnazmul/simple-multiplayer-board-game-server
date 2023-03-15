@@ -14,7 +14,7 @@ app.use(cors());
 const server = require("http").Server(app);
 const io = require("socket.io")(server, {
   cors: {
-    origin: ["https://simple-multiplayer-board-game-client.vercel.app/"],
+    origin: ["https://simple-multiplayer-board-game-client.vercel.app"],
     methods: ["GET", "POST"],
   },
 });
@@ -316,6 +316,10 @@ io.on("connection", (socket) => {
 const games = {};
 
 app.use(bodyParser.json());
+
+app.get("/",(req,res)=>{
+  res.send('server is running....');
+})
 
 // Handler for creating a new game
 app.post("/new-game", (req, res) => {
@@ -671,6 +675,7 @@ app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
   }
 });
 
-server.listen(5000, () => {
-  console.log("Server listening on port 5000");
+const PORT = process.env.PORT || 5000
+server.listen(PORT, () => {
+  console.log("Server listening...");
 });
