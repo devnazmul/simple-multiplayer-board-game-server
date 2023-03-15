@@ -2,6 +2,12 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const app = express();
 const cors = require("cors");
+const {
+  generateGameId,
+  generateBoard,
+  getQuestionDetails,
+} = require("./helpers");
+
 app.use(cors());
 
 // Initialize socket.io
@@ -16,22 +22,18 @@ const io = require("socket.io")(server, {
 let nextGameId = 0; // Define nextGameId here
 
 io.on("connection", (socket) => {
-  console.log(`Client ${socket.id} connected`);
 
   // Handler for creating a new game
   socket.on(
     "create_game",
     ({ playerName, boardSize, numPlayers, numTurns }) => {
-      console.log("Creating a new game...");
 
       // Set board size to 50 if boardSize is null or not a number
       const currentBoardSize =
         boardSize && Number(boardSize) ? Number(boardSize) : 50;
-      console.log(`Board size: ${currentBoardSize}`);
 
       // Validate numPlayers parameter
       if (numPlayers < 2) {
-        console.log("Number of players is invalid.");
         socket.emit("game_creation_error", {
           error: "Number of players should be at least 2",
         });
@@ -40,7 +42,6 @@ io.on("connection", (socket) => {
 
       // Validate boardSize parameter
       if (currentBoardSize < 50 || currentBoardSize > 200) {
-        console.log("Board size is invalid.");
         socket.emit("game_creation_error", {
           error: "Board size should be between 50 and 200",
         });
@@ -49,7 +50,6 @@ io.on("connection", (socket) => {
 
       // Validate numTurns parameter
       if (numTurns < 5 || numTurns > 20) {
-        console.log("Number of turns is invalid.");
         socket.emit("game_creation_error", {
           error: "Number of turns should be between 5 and 20",
         });
@@ -58,7 +58,6 @@ io.on("connection", (socket) => {
 
       // Generate a unique game ID
       const gameId = generateGameId();
-      console.log(`Game ID: ${gameId}`);
 
       // Construct the game object
       const game = {
@@ -71,6 +70,7 @@ io.on("connection", (socket) => {
             score: 0,
             turns: 0,
             nextTurn: true,
+            questions: [],
           },
         ],
         numPlayers,
@@ -86,7 +86,6 @@ io.on("connection", (socket) => {
       socket.join(gameId);
 
       // Emit a game_created event to the client with the game ID
-      // console.log("Game created successfully.", game);
       socket.emit("game_created", { game });
 
       // Return success message and game details to the client
@@ -109,23 +108,19 @@ io.on("connection", (socket) => {
   //New code
   socket.on("join-game", (data) => {
     const { gameId, playerName } = data;
-    console.log(`Player is trying ${playerName} join game ${gameId}`);
     let game = games[gameId];
     if (!game) {
-      console.log(`Game ${gameId} not found`);
       // If the game is not found, send an error message to the client
       socket.emit("game_not_found", { gameId });
       return;
     }
 
     if (game.started) {
-      console.log(`Game ${gameId} has already started`);
       socket.emit("game_join_error", { error: "Game has already started" });
       return;
     }
 
     if (game.players.length >= game.numPlayers) {
-      console.log(`In Socket Game ${gameId} is full`);
       socket.emit("game_join_error", { error: "Game is full" });
       return;
     }
@@ -135,7 +130,6 @@ io.on("connection", (socket) => {
       (player) => player.name === playerName
     );
     if (existingPlayer) {
-      console.log(`Player ${playerName} already exists in game ${gameId}`);
       socket.emit("game_join_error", {
         error: "A player with the same name already exists in the game.",
       });
@@ -149,11 +143,11 @@ io.on("connection", (socket) => {
       score: 0,
       turns: 0,
       nextTurn: false,
+      questions: [],
     };
     game.players.push(player);
     socket.join(gameId);
     io.to(gameId).emit("player_joined", { players: game.players });
-    console.log(`Player ${playerName} joined game ${gameId}`);
     socket.emit("join-game-success", { gameId, player });
 
     if (game.players.length === game.numPlayers) {
@@ -170,7 +164,6 @@ io.on("connection", (socket) => {
         status: game.started ? "active" : "waiting",
         gameId: game.id,
       });
-      console.log(`Game ${gameId} started with ${game.numPlayers} players`);
     } else {
       // Emit a message to all connected clients to update the game state
       io.to(gameId).emit("game_state_changed", {
@@ -179,11 +172,6 @@ io.on("connection", (socket) => {
         status: game.started ? "active" : "waiting",
         gameId: game.id,
       });
-      console.log(
-        `Player ${playerName} joined game ${gameId}, waiting for ${
-          game.numPlayers - game.players.length
-        } more players`
-      );
     }
   });
 
@@ -192,7 +180,6 @@ io.on("connection", (socket) => {
     socket.on(
       "updateScore",
       ({ gameId, playerIndex, selectedSquare, score }) => {
-        console.log(`Update Score Event is called for game ${gameId}`);
         // Find the game with the given ID
         const game = games[gameId];
         if (!game) {
@@ -213,7 +200,6 @@ io.on("connection", (socket) => {
           game.players[nextPlayerIndex].nextTurn = true;
           // Update the game state and emit a 'completed' event to the client
           game.board[selectedSquare].alreadyPlayed = true;
-          console.log("nextPlayerIndex Index is  ", nextPlayerIndex);
           // Emit a 'scoreChange' event to all clients connected to the game room
           io.in(gameId).emit("scoreChange", {
             players: game.players,
@@ -223,7 +209,6 @@ io.on("connection", (socket) => {
             board: game.board,
             nextPlayer: nextPlayerIndex,
           });
-          console.log("Emitted 'scoreChange' event");
 
           const gameState = {
             players: game.players,
@@ -233,7 +218,6 @@ io.on("connection", (socket) => {
             board: game.board,
           };
           socket.emit("completed", gameState);
-          // console.log("Emitted 'completed' event");
         }
       }
     );
@@ -241,7 +225,6 @@ io.on("connection", (socket) => {
 
   // Handle player disconnect
   socket.on("disconnect", () => {
-    console.log(`Player ${socket.id} has disconnected`);
 
     // Loop through all the games
     for (const game of Object.values(games)) {
@@ -257,13 +240,11 @@ io.on("connection", (socket) => {
         // Notify all connected clients that the player has left the game
         io.to(game.id).emit("player_left", { players: game.players });
 
-        console.log(`Game Players ${game.players} List`);
         // Check if the game should be stopped
         if (game.players.length === 0) {
           // Remove the game from the games object
           delete games[game.id];
 
-          console.log(`Game ${game.id} deleted`);
 
           // Notify all connected clients that the game has ended
           io.emit("game_ended", { gameId: game.id });
@@ -292,43 +273,10 @@ io.on("connection", (socket) => {
           });
         }
 
-        console.log(`Player ${socket.id} left game ${game.id}`);
         break;
       }
     }
   });
-
-  // socket.on("join_game", (gameId, playerName) => {
-  //   const game = games[gameId];
-  //   if (!game) {
-  //     console.log(`Game ${gameId} not found`);
-  //     socket.emit("game_join_error", { error: "Game not found" });
-  //   } else if (game.started) {
-  //     console.log(`Game ${gameId} has already started`);
-  //     socket.emit("game_join_error", { error: "Game has already started" });
-  //   } else if (game.players.length >= game.numPlayers) {
-  //     console.log(`In Socket Game ${gameId} is full`);
-  //     socket.emit("game_join_error", { error: "Game is full" });
-  //   } else {
-  //     // Check if player with same name already exists in the game
-  //     const existingPlayer = game.players.find(
-  //       (player) => player.name === playerName
-  //     );
-  //     if (existingPlayer) {
-  //       console.log(`Player ${playerName} already exists in game ${gameId}`);
-  //       socket.emit("game_join_error", {
-  //         error: "A player with the same name already exists in the game.",
-  //       });
-  //     } else {
-  //       const player = { name: playerName, score: 0 };
-  //       game.players.push(player);
-  //       socket.join(gameId);
-  //       io.to(gameId).emit("player_joined", { players: game.players });
-  //       console.log(`Player ${playerName} joined game ${gameId}`);
-  //       socket.emit("join-game-success", { gameId, player });
-  //     }
-  //   }
-  // });
 
   socket.on("start_game", (gameId) => {
     const game = games[gameId];
@@ -343,7 +291,6 @@ io.on("connection", (socket) => {
     } else {
       game.started = true;
       io.to(gameId).emit("game_started", { players: game.players });
-      console.log(`Game ${gameId} started`);
     }
   });
 
@@ -360,9 +307,7 @@ io.on("connection", (socket) => {
     } else {
       game.players[playerIndex].score = score;
       io.to(gameId).emit("score_updated", { playerIndex, score });
-      console.log(
-        `Player ${playerIndex} in game ${gameId} updated their score to ${score}`
-      );
+
     }
   });
 });
@@ -407,7 +352,16 @@ app.post("/new-game", (req, res) => {
   const game = {
     id: gameId,
     board: generateBoard(currentBoardSize),
-    players: [{ id: 0, name: playerName, score: 0, turns: 0, nextTurn: true }],
+    players: [
+      {
+        id: 0,
+        name: playerName,
+        score: 0,
+        turns: 0,
+        nextTurn: true,
+        questions: [],
+      },
+    ],
     numPlayers,
     numTurns,
     status: false,
@@ -459,10 +413,9 @@ app.post("/join-game/:gameId", (req, res) => {
       score: 0,
       turns: 0,
       nextTurn: false,
+      questions: [],
     });
 
-    // console.log(game.players.length, game);
-    // console.log({ name: playerName, score: 0 });
     setTimeout(() => {
       io.emit("playerJoined", {
         players: game.players,
@@ -512,9 +465,6 @@ app.post("/join-game/:gameId", (req, res) => {
     });
   }
 });
-app.get("/",(req,res)=>{
-  res.send('server is running....');
-})
 
 // Handler for getting game state
 app.get("/game/:gameId", (req, res) => {
@@ -532,52 +482,91 @@ app.get("/game/:gameId", (req, res) => {
       status = "in progress";
       io.emit("game-started", { game });
     }
+    let allTurnsTaken = true;
+    for (let i = 0; i < game.players.length; i++) {
+      if (game.players[i].turns < game.numTurns) {
+        allTurnsTaken = false;
+        break;
+      }
+    }
+
+    if (allTurnsTaken) {
+      let playersRanking = game.players.filter(
+        (player) => !player.isEliminated
+      );
+      playersRanking.sort((a, b) => b.score - a.score);
+      let winner = playersRanking[0].name;
+
+      res.json({ winner: winner, playersRanking: playersRanking });
+    }
 
     // Return the game state and status to the client
-    res.json({
-      boardSize: game.board.length,
-      board: game.board,
-      players: game.players,
-      status,
-      numPlayers: game.numPlayers,
-      playersJoined: game.players.length,
-      numTurns: game.numTurns,
-    });
+    else
+      res.json({
+        boardSize: game.board.length,
+        board: game.board,
+        players: game.players,
+        status,
+        numPlayers: game.numPlayers,
+        playersJoined: game.players.length,
+        numTurns: game.numTurns,
+      });
   }
 });
 
 // Handler for updating a player's score
 app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
   const { gameId, playerIndex, selectedSquare } = req.params;
+  const game = games[gameId];
   const { score } = req.body;
+  const { playerAnswer } = req.body;
+  const { timeToAnswer } = req.body;
+  const questionText = getQuestionDetails(selectedSquare, game.board);
+
+  const isAnswerCorrect =
+    parseInt(playerAnswer) === parseInt(game.board[selectedSquare].answer);
 
   // Find the game with the given ID
-  const game = games[gameId];
-  if (!game) {
-    // If the game is not found, return a 404 error
+
+  if (!game) { // If the game is not found, return a 404 error
+
     res.status(404).json({ error: "Game not found" });
-  } else if (playerIndex < 0 || playerIndex >= game.players.length) {
-    // If the player index is out of bounds, return a 400 error
+
+  } else if (playerIndex < 0 || playerIndex >= game.players.length) { // If the player index is out of bounds, return a 400 error
+
     res.status(400).json({ error: "Invalid player index" });
-  } else if (game.players[playerIndex].turns >= game.numTurns) {
-    // If the player has already taken the maximum number of turns, return a 400 error
-    res
-      .status(400)
-      .json({ error: "Maximum number of turns taken by the player" });
-  } else {
-    // Update the player's score and increment their turns taken
+
+  } else if (game.players[playerIndex].turns >= game.numTurns) { // If the player has already taken the maximum number of turns, return a 400 error
+
+    res.status(400).json({ error: "Maximum number of turns taken by the player" });
+
+  } else { // Update the player's score and increment their turns taken
+
     let playerTurns = game.players[playerIndex].turns;
+
+    game.players[playerIndex].questions.push({
+      question: questionText,
+      answer: playerAnswer,
+      isCorrect: isAnswerCorrect,
+      timeTaken: timeToAnswer,
+    });
+
     game.players[playerIndex].score += score;
+
     // Update the player's score
     game.players[playerIndex].turns++;
+
     // Set the current player's nextTurn to false
     game.players[playerIndex].nextTurn = false;
 
     // Notify all connected clients about the score change and the next player's turn
     let nextPlayerIndex;
+
     if (playerIndex >= game.players.length - 1) {
       nextPlayerIndex = 0;
-    } else nextPlayerIndex = parseInt(playerIndex) + 1;
+    } else {
+      nextPlayerIndex = parseInt(playerIndex) + 1;
+    }
 
     game.players[nextPlayerIndex].nextTurn = true;
     game.board[selectedSquare].alreadyPlayed = true;
@@ -592,7 +581,22 @@ app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
 
     let responseData;
 
-    if (allTurnsTaken) {
+    if (allTurnsTaken) { // If the game is finished
+      setTimeout(() => {
+        const currentPlayerTurns = game.players[playerIndex].turns;
+
+        if (currentPlayerTurns !== playerTurns) {
+          playerTurns = currentPlayerTurns; // update playerTurns before emitting event
+          io.in(gameId).emit("scoreChange", {
+            players: game.players,
+            numPlayers: game.numPlayers,
+            playersJoined: game.players.length,
+            numTurns: game.numTurns,
+            board: game.board,
+          });
+        }
+      }, 1000);
+
       let playersRanking = game.players.filter(
         (player) => !player.isEliminated
       );
@@ -607,17 +611,11 @@ app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
           winner: winner,
           playersRanking: playersRanking,
         });
-        console.log("Emitted 'gamecompleted' event");
       }, 1000);
-    } else {
+    } else { // Changing the player score
       setTimeout(() => {
         const currentPlayerTurns = game.players[playerIndex].turns;
-        console.log(
-          "Before Emitted 'scoreChange' event",
-          playerTurns,
-          "  - ",
-          currentPlayerTurns
-        );
+
         if (currentPlayerTurns !== playerTurns) {
           playerTurns = currentPlayerTurns; // update playerTurns before emitting event
           io.in(gameId).emit("scoreChange", {
@@ -627,12 +625,7 @@ app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
             numTurns: game.numTurns,
             board: game.board,
           });
-          console.log(
-            "Emitted 'scoreChange' event",
-            playerTurns,
-            "  - ",
-            currentPlayerTurns
-          );
+
         }
       }, 1000);
 
@@ -678,58 +671,6 @@ app.post("/game/:gameId/score/:playerIndex/:selectedSquare", (req, res) => {
   }
 });
 
-// Helper function to generate a random game ID
-function generateGameId() {
-  return Math.random().toString(36).substr(2, 9);
-}
-
-// Helper function to generate a random board
-function generateBoard(boardSize) {
-  const board = [];
-  for (let i = 0; i < boardSize; i++) {
-    let operand1, operand2, operator, answer;
-
-    // Generate random operands and operator
-    operator = ["+", "-", "*", "/"][Math.floor(Math.random() * 4)];
-    switch (operator) {
-      case "+":
-        operand1 = Math.floor(Math.random() * 100) + 1;
-        operand2 = Math.floor(Math.random() * 100) + 1;
-        answer = operand1 + operand2;
-        break;
-      case "-":
-        operand1 = Math.floor(Math.random() * 50) + 1;
-        operand2 = Math.floor(Math.random() * operand1) + 1;
-        answer = operand1 - operand2;
-        break;
-      case "*":
-        operand1 = Math.floor(Math.random() * 15) + 1;
-        operand2 = Math.floor(Math.random() * 15) + 1;
-        answer = operand1 * operand2;
-        break;
-      case "/":
-        operand1 = Math.floor(Math.random() * 15) + 1;
-        operand2 = Math.floor(Math.random() * operand1) + 1;
-        answer = Math.floor(operand1 / operand2);
-        break;
-      default:
-        operand1 = 0;
-        operand2 = 0;
-        answer = 0;
-    }
-
-    board.push({
-      operator,
-      operand1,
-      operand2,
-      answer,
-      counter: i,
-      alreadyPlayed: false,
-    });
-  }
-  return board;
-}
-const PORT = process.env.PORT || 5000
-server.listen(PORT, () => {
-  console.log("Server listening...");
+server.listen(5000, () => {
+  console.log("Server listening on port 5000");
 });
