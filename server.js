@@ -9,8 +9,6 @@ const io = require("socket.io")(server);
 require('./socket.js')(io);
 
 const {
-  generateGameId,
-  generateBoard,
   getQuestionDetails,
 } = require("./helpers");
 const { games } = require("./db.js");
